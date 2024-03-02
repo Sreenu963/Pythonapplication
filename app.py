@@ -1,102 +1,102 @@
-import json
-import requests
 import redis
+import json
 import matplotlib.pyplot as plt
+from api import TechnologyCompanyAPI  
 
 class DataProcessor:
-    def __init__(self, api_url, redis_host, redis_port, redis_db):
-    
-        # DataProcessor with API URL and Redis connection details.
-        self.api_url = api_url
-        self.redis_host = redis_host
-        self.redis_port = redis_port
-        self.redis_db = redis_db
-        self.redis_client = redis.StrictRedis(host=self.redis_host, port=self.redis_port, db=self.redis_db)
+    def __init__(self, data, redis_host, redis_port):
+        """
+        Initialize the DataProcessor with data, and Redis connection details.
 
-    def fetch_data_from_api(self):
-        """Fetch JSON data from the API."""
-        try:
-            response = requests.get(self.api_url)
-            response.raise_for_status()  # Raise an exception for 4xx or 5xx status codes
-            return response.json()
-        except requests.exceptions.RequestException as e:
-            print("Error fetching data from API:", e)
-            return None
+        Args:
+            data (list): The data to process.
+            redis_host (str): The host of the Redis server.
+            redis_port (int): The port of the Redis server.
+        """
+        self.data = data
+        self.redis_client = redis.Redis(host=redis_host, port=redis_port)
 
-    def insert_into_redis(self, data):
-        """Insert JSON data into RedisJSON."""
-        try:
-            for key, value in data.items():
-                self.redis_client.jsonset(key, '.', json.dumps(value))
-        except redis.exceptions.RedisError as e:
-            print("Error inserting data into Redis:", e)
+    def insert_into_redisjson(self):
+        """
+        Insert JSON data into RedisJSON.
+        """
+        for item in self.data:
+            self.redis_client.set(item['id'], json.dumps(item))
 
-    def generate_chart(self, data):
-        """Generate a matplotlib chart based on data."""
-        try:
-            plt.plot(data)
-            plt.xlabel('X-axis')
-            plt.ylabel('Y-axis')
-            plt.title('Data Chart')
-            plt.show()
-        except Exception as e:
-            print("Error generating chart:", e)
+    def generate_chart(self):
+        """
+        Generate a bar chart showing the distribution of product prices.
+        """
+        categories = set(item['category'] for item in self.data)
+        category_prices = {category: [] for category in categories}
 
-    def perform_aggregation(self, data):
-        """Perform aggregation on data."""
-        try:
-            total = sum(data)
-            average = total / len(data)
-            return total, average
-        except Exception as e:
-            print("Error performing aggregation:", e)
-# Search for data in a list based on a given query.
-    def search_data(self, data, query):
-        
-        try:
-           
-            results = [item for item in data if query.lower() in item.get('name', '').lower()]
-            return results
-        except Exception as e:
-            print("Error searching data:", e)
+        for item in self.data:
+            category_prices[item['category']].append(item['price'])
+
+        plt.figure(figsize=(10, 6))
+        for category, prices in category_prices.items():
+            plt.hist(prices, bins=20, alpha=0.5, label=category)
+
+        plt.xlabel('Price')
+        plt.ylabel('Frequency')
+        plt.title('Price Distribution by Category')
+        plt.legend()
+        plt.show()
+
+    def perform_aggregation(self):
+        """
+        Perform aggregation on the provided data.
+
+        Returns:
+            dict: Aggregation results including total count, average price, and price range.
+        """
+        total_count = len(self.data)
+        total_price = sum(item['price'] for item in self.data)
+        average_price = total_price / total_count
+        min_price = min(item['price'] for item in self.data)
+        max_price = max(item['price'] for item in self.data)
+
+        return {
+            'total_count': total_count,
+            'average_price': average_price,
+            'price_range': {'min_price': min_price, 'max_price': max_price}
+        }
+
+    def search_data(self, query):
+        """
+        Search for data based on the given query.
+
+        Args:
+            query (str): The search query.
+
+        Returns:
+            list: List of items matching the query.
+        """
+        # Search for items where the name or description contains the query string
+        results = [item for item in self.data if query.lower() in item.get('name', '').lower() or query.lower() in item.get('description', '').lower()]
+        return results
+
 if __name__ == "__main__":
-    # DataProcessor with mock API URL and Redis connection details
-    processor = DataProcessor(api_url="http://127.0.0.1:5000/users",
-                              redis_host="localhost",
-                              redis_port=6379,
-                              redis_db=0)
+    # Mock data generation
+    mock_data = TechnologyCompanyAPI.get_products(100)
 
-    # Fetch data from sophisticated mock API
-    data = processor.fetch_data_from_api()
-    if data:
-        print("Data from API:", data)
+    # Print generated data
+    print("Generated Data:")
+    for item in mock_data:
+        print(item)
 
-        processor.generate_chart([1, 2, 3, 4, 5])
+    # Redis connection details
+    redis_host = "localhost"
+    redis_port = 6379
 
-        # Aggregation
-        total, average = processor.perform_aggregation([1, 2, 3, 4, 5])
-        print("Total:", total)
-        print("Average:", average)
+    # Data processing
+    processor = DataProcessor(mock_data, redis_host, redis_port)
+    processor.insert_into_redisjson()
+    processor.generate_chart()
+    aggregation_result = processor.perform_aggregation()
+    print("Aggregation Result:", aggregation_result)
 
-        # List to store all search results
-        all_results = []
-
-        # Enter search query
-        while True:
-            query = input("Enter search query (Enter 'q' to quit): ")
-            if query.lower() == 'q':
-                break
-
-            # Search data
-            results = processor.search_data(data, query)
-            print("Search Results:")
-            if results:
-                for result in results:
-                    print(result)
-                    all_results.append(result)
-            else:
-                print("No results found for query:", query)
-        
-        # Save all search results to search_results.txt file
-        with open("search_results.txt", "w") as file:
-            file.write(json.dumps(all_results))
+    # Search data
+    search_query = input("Enter search query: ")
+    search_results = processor.search_data(search_query)
+    print("Search Results:", search_results)
