@@ -1,102 +1,97 @@
+import requests
 import redis
 import json
 import matplotlib.pyplot as plt
-from api import TechnologyCompanyAPI  
+from datetime import datetime
 
 class DataProcessor:
-    def __init__(self, data, redis_host, redis_port):
+    def __init__(self, api_url, redis_host='localhost', redis_port=6379):
         """
-        Initialize the DataProcessor with data, and Redis connection details.
-
-        Args:
-            data (list): The data to process.
-            redis_host (str): The host of the Redis server.
-            redis_port (int): The port of the Redis server.
+            redis_host (str): Hostname of the Redis server (default: 'localhost')
+            redis_port (int): Port of the Redis server (default: 6379)
         """
-        self.data = data
+        self.api_url = api_url
         self.redis_client = redis.Redis(host=redis_host, port=redis_port)
 
-    def insert_into_redisjson(self):
-        """
-        Insert JSON data into RedisJSON.
-        """
-        for item in self.data:
-            self.redis_client.set(item['id'], json.dumps(item))
+    def fetch_data_from_api(self):
+        """Fetch JSON data from the specified API"""
+        response = requests.get(self.api_url)
+        if response.status_code == 200:
+            data = response.json()
+            print("Fetched data:")
+            print(json.dumps(data, indent=2))
+            return data
+        else:
+            print("Failed to fetch data from API")
+            return None
 
-    def generate_chart(self):
-        """
-        Generate a bar chart showing the distribution of product prices.
-        """
-        categories = set(item['category'] for item in self.data)
-        category_prices = {category: [] for category in categories}
-
-        for item in self.data:
-            category_prices[item['category']].append(item['price'])
-
-        plt.figure(figsize=(10, 6))
-        for category, prices in category_prices.items():
-            plt.hist(prices, bins=20, alpha=0.5, label=category)
-
-        plt.xlabel('Price')
-        plt.ylabel('Frequency')
-        plt.title('Price Distribution by Category')
-        plt.legend()
-        plt.show()
+    def insert_into_redis(self, data):
+        """Insert JSON data into Redis"""
+        for idx, item in enumerate(data):
+            self.redis_client.set(f"data:{idx}", json.dumps(item))
 
     def perform_aggregation(self):
-        """
-        Perform aggregation on the provided data.
+        """Perform aggregation on the stored data"""
+        total_items = self.redis_client.dbsize()
+        print(f"Total items stored in Redis: {total_items}")
 
-        Returns:
-            dict: Aggregation results including total count, average price, and price range.
-        """
-        total_count = len(self.data)
-        total_price = sum(item['price'] for item in self.data)
-        average_price = total_price / total_count
-        min_price = min(item['price'] for item in self.data)
-        max_price = max(item['price'] for item in self.data)
+    def search_data(self, query, data):
+        """Search for data in fetched data based on a query"""
+        matching_items = [item for item in data if query.lower() in str(item).lower()]
+        if matching_items:
+            print("Matching items found:")
+            for item in matching_items:
+                print(item)
+        else:
+            print("No matching items found")
 
-        return {
-            'total_count': total_count,
-            'average_price': average_price,
-            'price_range': {'min_price': min_price, 'max_price': max_price}
-        }
+    def process_data(self, data):
+        """Process fetched data to extract version and added date"""
+        api_versions = []
+        api_dates = []
+        for api, api_data in data.items():
+            for version, version_data in api_data['versions'].items():
+                api_versions.append(version)
+                api_dates.append(version_data['added'])
+        
+        # Sort based on added date
+        sorted_data = sorted(zip(api_versions, api_dates), key=lambda x: x[1], reverse=True)[:10]
+        versions, added_dates = zip(*sorted_data)
+        
+        # Convert added dates to datetime objects
+        added_dates = [datetime.strptime(date, "%Y-%m-%dT%H:%M:%S.%fZ") for date in added_dates]
+        
+        return versions, added_dates
 
-    def search_data(self, query):
-        """
-        Search for data based on the given query.
-
-        Args:
-            query (str): The search query.
-
-        Returns:
-            list: List of items matching the query.
-        """
-        # Search for items where the name or description contains the query string
-        results = [item for item in self.data if query.lower() in item.get('name', '').lower() or query.lower() in item.get('description', '').lower()]
-        return results
+    def generate_chart(self, versions, added_dates):
+        """Generate a chart based on versions and added dates"""
+        plt.plot(added_dates, versions, marker='o', linestyle='-')
+        plt.xlabel('Added Date')
+        plt.ylabel('Version')
+        plt.title('Top 10 APIs based on Version and Date')
+        plt.xticks(rotation=45)
+        plt.tight_layout()
+        plt.show()
 
 if __name__ == "__main__":
-    # Mock data generation
-    mock_data = TechnologyCompanyAPI.get_products(100)
+    api_url = "https://api.apis.guru/v2/list.json"
+    processor = DataProcessor(api_url)
 
-    # Print generated data
-    print("Generated Data:")
-    for item in mock_data:
-        print(item)
+    # Fetch data from API
+    data = processor.fetch_data_from_api()
 
-    # Redis connection details
-    redis_host = "localhost"
-    redis_port = 6379
+    if data:
+        # Insert data into Redis
+        processor.insert_into_redis(data)
 
-    # Data processing
-    processor = DataProcessor(mock_data, redis_host, redis_port)
-    processor.insert_into_redisjson()
-    processor.generate_chart()
-    aggregation_result = processor.perform_aggregation()
-    print("Aggregation Result:", aggregation_result)
+        # Generate a chart based on versions and added dates for top 10 APIs
+        versions, added_dates = processor.process_data(data)
+        processor.generate_chart(versions, added_dates)
 
-    # Search data
-    search_query = input("Enter search query: ")
-    search_results = processor.search_data(search_query)
-    print("Search Results:", search_results)
+        # Aggregation
+        processor.perform_aggregation()
+
+        # Prompt user to search for data
+        query = input("Enter query to search: ")
+        processor.search_data(query, data) 
+
